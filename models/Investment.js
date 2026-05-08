@@ -56,7 +56,8 @@ const investmentSchema = new mongoose.Schema({
   totalClaimed: {
     type: Number,
     default: 0
-  }
+  }, 
+   productType: { type: String, enum: ["free", "paid"], default: "paid" }  // ✅ নতুন ফিল্ড
 }, {
   timestamps: true
 });

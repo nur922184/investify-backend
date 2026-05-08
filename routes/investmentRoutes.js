@@ -5,7 +5,8 @@ const User = require("../models/User");
 const Investment = require("../models/Investment"); // Make sure you have this model
 
 // 👉 CREATE INVESTMENT (WITH BALANCE DEDUCTION)
-// routes/investmentRoutes.js বা যেখানে পোস্ট API আছে
+// routes/investmentRoutes.js বা যেখানে পোস্ট API আছে (আপডেটেড ভার্সন)
+
 router.post("/create", async (req, res) => {
   try {
     const {
@@ -16,10 +17,11 @@ router.post("/create", async (req, res) => {
       dailyIncome,
       duration,
       totalIncome,
+      productType  // ✅ নতুন: "free" বা "paid"
     } = req.body;
 
     // Validate required fields
-    if (!userId || !productId || !amount) {
+    if (!userId || !productId) {
       return res.status(400).json({ message: "সব তথ্য প্রয়োজন" });
     }
 
@@ -29,34 +31,56 @@ router.post("/create", async (req, res) => {
       return res.status(404).json({ message: "ইউজার পাওয়া যায়নি" });
     }
 
-    // Check if user has enough balance
-    if (user.balance < amount) {
+    // ✅ ফ্রি প্রোডাক্ট চেক করা
+    const isFreeProduct = productType === "free" || amount === 0;
+
+    // ✅ ফ্রি প্রোডাক্ট আগে নিয়েছে কিনা চেক করা
+    if (isFreeProduct) {
+      const existingFreeInvestment = await Investment.findOne({
+        userId,
+        productType: "free"
+      });
+
+      if (existingFreeInvestment) {
+        return res.status(400).json({
+          message: "আপনি ইতিমধ্যে বিআইপি (ফ্রি) প্যাকেজটি নিয়ে ফেলেছেন! প্রতিটি ইউজার শুধুমাত্র একবার এই প্যাকেজ নিতে পারবেন।"
+        });
+      }
+    }
+
+    // ✅ পেইড প্রোডাক্টের জন্য ব্যালেন্স চেক
+    const finalAmount = amount || 0;
+
+    if (!isFreeProduct && user.balance < finalAmount) {
       return res.status(400).json({
         message: "অপর্যাপ্ত ব্যালেন্স!",
         currentBalance: user.balance,
-        required: amount
+        required: finalAmount
       });
     }
 
-    // Parse duration (যেমন: "30 days" থেকে 30 বের করা)
-    let remainingDays = 365; // default
+    // Parse duration (যেমন: "৪ দিন" বা "90 days" থেকে সংখ্যা বের করা)
+    let remainingDays = 4; // default
     if (duration) {
+      // বাংলা ও ইংরেজি উভয় সংখ্যা সাপোর্ট করবে
       const daysMatch = duration.match(/\d+/);
       if (daysMatch) {
         remainingDays = parseInt(daysMatch[0]);
       }
     }
 
-    // ✅ IMPORTANT: Deduct balance
-    user.balance = user.balance - amount;
-    await user.save();
+    // ✅ শুধু পেইড প্রোডাক্টের জন্য ব্যালেন্স কাটবে
+    if (!isFreeProduct) {
+      user.balance = user.balance - finalAmount;
+      await user.save();
+    }
 
-    // ✅ Create investment record with proper lastClaimDate
+    // ✅ Investment রেকর্ড তৈরি করা
     const investment = new Investment({
       userId,
       productId,
       productName,
-      amount,
+      amount: finalAmount,
       dailyIncome: dailyIncome || 0,
       duration: duration || "অনির্দিষ্ট",
       totalIncome: totalIncome || 0,
@@ -65,14 +89,17 @@ router.post("/create", async (req, res) => {
       startDate: new Date(),
       lastClaimDate: null,  // ✅ null - মানে এখনই ক্লেইম করতে পারবে
       nextClaimAvailableTime: null,  // ✅ প্রথমবার ক্লেইমের জন্য কোনো বাধা নেই
-      totalClaimed: 0
+      totalClaimed: 0,
+      productType: isFreeProduct ? "free" : "paid"  // ✅ টাইপ সেভ করা
     });
 
     await investment.save();
 
     res.status(201).json({
       success: true,
-      message: "বিনিয়োগ সফল হয়েছে!",
+      message: isFreeProduct
+        ? "অভিনন্দন! 🎁 বিআইপি (ফ্রি) প্যাকেজ সফলভাবে নেওয়া হয়েছে! দৈনিক আয় শুরু হয়েছে।"
+        : "বিনিয়োগ সফল হয়েছে!",
       investment,
       newBalance: user.balance,
     });
